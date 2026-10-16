@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Script de instalación automatizada de Nagios Core en Ubuntu
+# Detiene el script inmediatamente si ocurre un error
+set -e
+
+echo "=========================================================="
+echo " Starting Nagios Core Installation "
+echo "=========================================================="
+
+# 1. Instalar dependencias del sistema
+echo -e "\n[1/5] Installing system dependencies..."
+apt update
+apt install build-essential curl wget unzip openssl libgd-dev libssl-dev libapache2-mod-php php-gd php -y
+
+# 2. Descargar y compilar Nagios Core
+echo -e "\n[2/5] Fetching and compiling Nagios Core..."
+cd /tmp
+VER=$(curl -s https://github.com | grep tag_name | cut -d '"' -f 4)
+
+echo "Downloading Nagios Core version: $VER"
+wget https://github.com{VER}/${VER}.tar.gz
+tar -xvf ${VER}.tar.gz
+
+# Entrar al directorio correcto (controlando variaciones de nombre de carpeta de GitHub)
+if [ -d "nagioscore-${VER}" ]; then
+    cd nagioscore-${VER}
+else
+    cd ${VER}
+fi
+
+./configure
+make all
+
+# Crear usuarios y grupos del sistema
+make install-groups-users
+usermod -aG nagios www-data
+
+# Instalar binarios y archivos de configuración
+make install
+make install-init
+make install-commandmode
+make install-config
+make install-webconf
+
+# 3. Descargar e instalar Nagios Plugins
+echo -e "\n[3/5] Fetching and compiling Nagios Plugins..."
+cd /tmp
+PLUGIN_VER=$(curl -s https://github.com | grep tag_name | cut -d '"' -f 4 | sed 's/release-//')
+
+echo "Downloading Nagios Plugins version: $PLUGIN_VER"
+curl -SL https://github.com{PLUGIN_VER}/nagios-plugins-${PLUGIN_VER}.tar.gz | tar -xzf -
+
+# Crear directorios internos requeridos
+mkdir -p /usr/local/nagios/var/spool/checkresults
+chown -R nagios:nagios /usr/local/nagios/var/spool/checkresults
+
+cd nagios-plugins-${PLUGIN_VER}
+./configure --with-nagios-user=nagios --with-nagios-group=nagios
+make
+make install
+
+# 4. Configurar Apache y los servicios del sistema
+echo -e "\n[4/5] Configuring Apache web server and system services..."
+a2enmod cgi rewrite
+
+# Configurar permisos para el archivo de contraseñas de la interfaz web
+touch /usr/local/nagios/etc/htpasswd.users
+chown www-data:www-data /usr/local/nagios/etc/htpasswd.users
+chmod 640 /usr/local/nagios/etc/htpasswd.users
+
+# 5. Crear usuario Web e Iniciar Servicios
+echo -e "\n[5/5] Final Configuration Needed:"
+echo "----------------------------------------------------------"
+echo "Please set a password for the web user 'nagiosadmin':"
+echo "----------------------------------------------------------"
+# Se ejecuta htpasswd sin la opción '-c' porque el archivo ya fue tocado arriba
+htpasswd /usr/local/nagios/etc/htpasswd.users nagiosadmin
+
+# Reiniciar e iniciar servicios
+systemctl restart apache2
+systemctl enable nagios --now
+
+# Obtener IP local del servidor
+IP_SERVER=$(hostname -I | awk '{print $1}')
+
+echo "=========================================================="
+echo " Nagios Core successfully installed! "
+echo "=========================================================="
+echo "Access the web panel here: http://${IP_SERVER}/nagios/"
+echo "User: nagiosadmin"
+echo "Password: [The password you just created]"
+echo "=========================================================="
