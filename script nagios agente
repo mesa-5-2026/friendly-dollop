@@ -1,0 +1,55 @@
+#!/bin/bash 
+
+if [ "$EUID" -ne 0 ]; then
+ echo " TIENES QUE SER ROOT PARA EJECUTAR ESTE SCRIPT D:"
+   exit 1
+fi
+
+echo "actualizando equipo........"
+
+apt update && apt upgrade -y
+
+echo "instalando agente de nagios"
+
+apt install nagios-nrpe-server nagios-plugins -y
+
+echo "configuracion del agente NRPE"
+
+read -p "por favor intrudusca la ip del servidor nagios que desea autorisar" $ IP_nagios
+
+if [ -z "$IP_nagios" ]; then
+echo "Error: la IP no puede estar vacia "
+exit 1
+fi
+
+ARCH_CONF="/etc/nagios/nrpe.cfg"
+
+cp "$ARCH_CONF" "${ARCH_CONF}.bak"
+echo "copia de seguridad por si se arruina el archivo"
+
+sed -i "s|âllowed_host=.*|allowed_host=127.0.0.1,::1,$IP_nagios"
+echo "linea 'allowes hosts' actualizado"
+
+sed -i '/command\[check_disk\]/d' "$ARCH_CONF"
+sed -i '/command\[check_load\]/d' "$ARCH_CONF"
+
+cat << 'EOF' "$ARCH_CONF"
+command[check_disk]=/usr/lib/nagios/plugins/check_disk -w 20% -c 10% -p /
+command[check_load]=/usr/lib/nagios/plugins/check_load -w 15,10,5 -c 30,25,20
+EOF
+
+echo "comandis de monitoreo configurados correctament"
+
+echo " Reinciando el servidor nagios-nrpe-server"
+systemctl restart nagios-nrpe-server
+systemctl enable nagios-nrpe-server
+
+#instalasion de un 
+
+apt install ufw -y
+
+ufw disable
+
+ufw allow 5666/tcp
+
+ufw enable
